@@ -4,6 +4,8 @@ package main
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -17,6 +19,8 @@ import (
 	"github.com/sakshamsaxena/blaze/internal/gitx"
 	"github.com/sakshamsaxena/blaze/internal/logger"
 	"github.com/sakshamsaxena/blaze/internal/plan"
+	"github.com/sakshamsaxena/blaze/internal/server"
+	"github.com/sakshamsaxena/blaze/internal/state"
 	"github.com/sakshamsaxena/blaze/internal/target"
 	"github.com/spf13/cobra"
 )
@@ -110,7 +114,6 @@ func addReviewFlags(cmd *cobra.Command, cfg *config.Config) {
 }
 
 // run validates cfg and executes the pipeline for mode "review" or "plan".
-// Mode "review" is not implemented yet.
 func run(ctx context.Context, cfg *config.Config, mode string) error {
 	if err := cfg.Validate(); err != nil {
 		return err
@@ -128,7 +131,12 @@ func run(ctx context.Context, cfg *config.Config, mode string) error {
 		fmt.Fprintf(os.Stderr, "blaze: plan ready: %d threads, %d items\n", p.Stats.Threads, p.Stats.Items)
 		return writePlan(os.Stdout, p)
 	case "review":
-		return fmt.Errorf("review mode: state and server are not implemented yet")
+		p, err := buildPlan(ctx, cfg, os.Stderr)
+		if err != nil {
+			return err
+		}
+		fmt.Fprintf(os.Stderr, "blaze: plan ready: %d threads, %d items\n", p.Stats.Threads, p.Stats.Items)
+		return runReview(ctx, cfg, p)
 	default:
 		return fmt.Errorf("unknown mode %q", mode)
 	}
@@ -200,4 +208,44 @@ func writePlan(w io.Writer, p *plan.Plan) error {
 	enc := json.NewEncoder(w)
 	enc.SetIndent("", "  ")
 	return enc.Encode(p)
+}
+
+// runReview opens the review state for p.Target and serves it until ctx is
+// cancelled.
+func runReview(ctx context.Context, cfg *config.Config, p *plan.Plan) error {
+	git := gitx.New(cfg.Repo)
+	root, err := git.RepoRoot(ctx)
+	if err != nil {
+		return fmt.Errorf("repo root: %w", err)
+	}
+	git = git.WithDir(root)
+
+	backend := "file"
+	if cfg.NoState {
+		backend = "memory"
+	}
+	st, err := state.New(backend)
+	if err != nil {
+		return fmt.Errorf("state: %w", err)
+	}
+	if err := st.Open(repoKeyOf(root), p.Target.StateKey); err != nil {
+		return fmt.Errorf("open state: %w", err)
+	}
+
+	return server.Serve(ctx, server.Options{
+		Plan:    p,
+		State:   st,
+		Git:     git,
+		Port:    cfg.Port,
+		OpenURL: !cfg.NoOpen,
+		Version: version,
+		Stderr:  os.Stderr,
+	})
+}
+
+// repoKeyOf returns the first 12 hex characters of sha256(root), used to
+// namespace a review target's persisted state by repository.
+func repoKeyOf(root string) string {
+	sum := sha256.Sum256([]byte(root))
+	return hex.EncodeToString(sum[:])[:12]
 }
