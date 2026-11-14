@@ -4,11 +4,20 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"io"
 	"os"
+	"os/signal"
+	"syscall"
 
 	"github.com/sakshamsaxena/blaze/internal/config"
+	"github.com/sakshamsaxena/blaze/internal/diff"
+	"github.com/sakshamsaxena/blaze/internal/dodge"
+	"github.com/sakshamsaxena/blaze/internal/gitx"
 	"github.com/sakshamsaxena/blaze/internal/logger"
+	"github.com/sakshamsaxena/blaze/internal/plan"
+	"github.com/sakshamsaxena/blaze/internal/target"
 	"github.com/spf13/cobra"
 )
 
@@ -17,7 +26,9 @@ import (
 const version = "0.0.0-dev"
 
 func main() {
-	if err := newRootCmd().Execute(); err != nil {
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	if err := newRootCmd().ExecuteContext(ctx); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
@@ -99,7 +110,7 @@ func addReviewFlags(cmd *cobra.Command, cfg *config.Config) {
 }
 
 // run validates cfg and executes the pipeline for mode "review" or "plan".
-// The pipeline is not implemented yet.
+// Mode "review" is not implemented yet.
 func run(ctx context.Context, cfg *config.Config, mode string) error {
 	if err := cfg.Validate(); err != nil {
 		return err
@@ -107,6 +118,86 @@ func run(ctx context.Context, cfg *config.Config, mode string) error {
 	if err := logger.Init(cfg.LogLevel); err != nil {
 		return err
 	}
-	_ = mode
-	return fmt.Errorf("not implemented")
+
+	switch mode {
+	case "plan":
+		p, err := buildPlan(ctx, cfg, os.Stderr)
+		if err != nil {
+			return err
+		}
+		fmt.Fprintf(os.Stderr, "blaze: plan ready: %d threads, %d items\n", p.Stats.Threads, p.Stats.Items)
+		return writePlan(os.Stdout, p)
+	case "review":
+		return fmt.Errorf("review mode: state and server are not implemented yet")
+	default:
+		return fmt.Errorf("unknown mode %q", mode)
+	}
+}
+
+// buildPlan runs the pipeline common to both modes: resolve the target,
+// build the head symbol graph, parse the diff, and build the Plan.
+// Progress lines go to stderr.
+func buildPlan(ctx context.Context, cfg *config.Config, stderr io.Writer) (*plan.Plan, error) {
+	git := gitx.New(cfg.Repo)
+	root, err := git.RepoRoot(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("repo root: %w", err)
+	}
+	git = git.WithDir(root)
+
+	fmt.Fprintln(stderr, "blaze: resolving target …")
+	tgt, err := target.Resolve(ctx, git, *cfg)
+	if err != nil {
+		return nil, fmt.Errorf("resolve target: %w", err)
+	}
+
+	wt, err := git.EnsureWorktree(ctx, tgt.HeadSHA)
+	if err != nil {
+		return nil, fmt.Errorf("ensure worktree: %w", err)
+	}
+
+	fmt.Fprintln(stderr, "blaze: analysing packages …")
+	gp, err := dodge.New("go")
+	if err != nil {
+		return nil, fmt.Errorf("dodge provider: %w", err)
+	}
+	graph, err := gp.Build(ctx, dodge.BuildInput{RepoRoot: wt, ModuleDir: cfg.ModuleDir})
+	if err != nil {
+		return nil, fmt.Errorf("build graph: %w", err)
+	}
+
+	raw, err := git.Diff(ctx, tgt.BaseSHA, tgt.HeadSHA)
+	if err != nil {
+		return nil, fmt.Errorf("diff: %w", err)
+	}
+	names, err := git.NameStatus(ctx, tgt.BaseSHA, tgt.HeadSHA)
+	if err != nil {
+		return nil, fmt.Errorf("name status: %w", err)
+	}
+	files, err := diff.Parse(names, raw)
+	if err != nil {
+		return nil, fmt.Errorf("parse diff: %w", err)
+	}
+
+	p, err := plan.Build(ctx, plan.Input{
+		Target:    tgt,
+		Files:     files,
+		Graph:     graph,
+		Provider:  gp,
+		Git:       git,
+		Worktree:  wt,
+		ModuleDir: cfg.ModuleDir,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("build plan: %w", err)
+	}
+	return p, nil
+}
+
+// writePlan encodes p as indented JSON to w, exactly as mode "plan" writes
+// it to stdout.
+func writePlan(w io.Writer, p *plan.Plan) error {
+	enc := json.NewEncoder(w)
+	enc.SetIndent("", "  ")
+	return enc.Encode(p)
 }
