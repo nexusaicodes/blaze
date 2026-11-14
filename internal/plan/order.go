@@ -49,7 +49,7 @@ func order(groups []*group) []Thread {
 			Kind:     g.kind,
 			Title:    g.title,
 			Subtitle: g.subtitle,
-			Risk:     Risk{Level: "none", Reasons: []string{}},
+			Risk:     threadRisk(items),
 			ItemIDs:  nonNil(ids),
 		}}
 		if len(items) > 0 {

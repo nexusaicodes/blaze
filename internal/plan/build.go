@@ -22,12 +22,8 @@ type Input struct {
 	ModuleDir string
 }
 
-// Build runs the plan pipeline of 05-plan.md over in and returns the
-// resulting Plan.
-//
-// This milestone runs steps 1-4 and 7 (attribute, classify, link, thread,
-// order); Risk and Blast are left at their zero values until the steps
-// that compute them.
+// Build runs the full plan pipeline of 05-plan.md over in and returns the
+// resulting Plan: attribute, classify, link, thread, blast, risk, order.
 func Build(ctx context.Context, in Input) (*Plan, error) {
 	byKey, warnings, err := attribute(ctx, in)
 	if err != nil {
@@ -48,7 +44,6 @@ func Build(ctx context.Context, in Input) (*Plan, error) {
 		item.Slices = nonNil(item.Slices)
 		item.Uses = []Link{}
 		item.UsedBy = []Link{}
-		item.Risk = Risk{Level: "none", Reasons: []string{}}
 
 		items[item.ID] = item
 		added += item.Added
@@ -59,6 +54,14 @@ func Build(ctx context.Context, in Input) (*Plan, error) {
 	}
 
 	link(items, in.Graph)
+
+	itemOf := buildItemOf(items)
+	cache := newBlastCache(in.Worktree)
+	computeBlast(items, in.Graph, itemOf, cache)
+	for _, it := range items {
+		it.Risk = risk(it)
+	}
+
 	groups := buildThreads(items)
 	threads := order(groups)
 	for _, t := range threads {
