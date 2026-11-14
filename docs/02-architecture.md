@@ -79,7 +79,7 @@ cmd/blaze → config, logger, gitx, target, diff, dodge, plan, state, server
 server    → plan, state, gitx, web
 plan      → diff, dodge, target
 target    → gitx
-dodge     → (standard library, x/tools only)
+dodge     → logger (standard library, x/tools only)
 diff      → (standard library only)
 state     → (standard library only)
 ```
