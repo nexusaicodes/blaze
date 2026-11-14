@@ -4,7 +4,6 @@ package target
 
 import (
 	"context"
-	"fmt"
 
 	"github.com/sakshamsaxena/blaze/internal/config"
 	"github.com/sakshamsaxena/blaze/internal/gitx"
@@ -39,7 +38,7 @@ type Target struct {
 // otherwise a local ref range.
 func Resolve(ctx context.Context, git *gitx.Runner, cfg config.Config) (Target, error) {
 	if cfg.PR != "" {
-		return Target{}, fmt.Errorf("resolve target: github PR targets are not implemented yet; use --base/--head")
+		return resolveGitHub(ctx, git, cfg)
 	}
 	return resolveLocal(ctx, git, cfg)
 }

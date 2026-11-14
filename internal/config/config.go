@@ -33,13 +33,20 @@ var logLevels = map[string]bool{
 	"error": true,
 }
 
+// defaultHead is the zero-value behaviour of --head: review the current
+// checkout. It is also the flag's registered default, so an invocation
+// that never passes --head still has Head == defaultHead, not "".
+const defaultHead = "HEAD"
+
 // Validate rejects:
-//   - PR together with --base or --head
+//   - PR together with --base or an explicit --head (one other than
+//     defaultHead, which every invocation carries whether or not the user
+//     passed --head)
 //   - a --module-dir that is absolute or contains ..
 //   - a port outside 0-65535
 //   - an unknown log level
 func (c Config) Validate() error {
-	if c.PR != "" && (c.Base != "" || c.Head != "") {
+	if c.PR != "" && (c.Base != "" || (c.Head != "" && c.Head != defaultHead)) {
 		return fmt.Errorf("PR together with --base or --head: pass either a PR or --base/--head, not both")
 	}
 	if filepath.IsAbs(c.ModuleDir) {

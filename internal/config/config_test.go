@@ -47,6 +47,15 @@ func TestValidate(t *testing.T) {
 			wantErr: "PR together with --base",
 		},
 		{
+			name: "PR alone with head left at its flag default",
+			mutate: func(c config.Config) config.Config {
+				c.PR = "482"
+				c.Head = "HEAD"
+				return c
+			},
+			wantErr: "",
+		},
+		{
 			name: "module-dir absolute",
 			mutate: func(c config.Config) config.Config {
 				c.ModuleDir = "/etc"
