@@ -22,17 +22,12 @@ type Input struct {
 	ModuleDir string
 }
 
-// placeholderThreadKey is the Thread.Key every item is placed under until
-// step 4 (thread) replaces this placeholder with the real threads.
-const placeholderThreadKey = "thread:placeholder"
-
 // Build runs the plan pipeline of 05-plan.md over in and returns the
 // resulting Plan.
 //
-// This milestone runs only step 1 (attribute) and step 2 (classify); every
-// item is placed into a single placeholder thread, and Risk, Blast, Uses
-// and UsedBy are left at their zero values until the later steps that
-// compute them.
+// This milestone runs steps 1-4 and 7 (attribute, classify, link, thread,
+// order); Risk and Blast are left at their zero values until the steps
+// that compute them.
 func Build(ctx context.Context, in Input) (*Plan, error) {
 	byKey, warnings, err := attribute(ctx, in)
 	if err != nil {
@@ -63,7 +58,9 @@ func Build(ctx context.Context, in Input) (*Plan, error) {
 		}
 	}
 
-	threads := placeholderThreads(byKey, keys)
+	link(items, in.Graph)
+	groups := buildThreads(items)
+	threads := order(groups)
 	for _, t := range threads {
 		for _, id := range t.ItemIDs {
 			items[id].ThreadID = t.ID
@@ -92,23 +89,6 @@ func Build(ctx context.Context, in Input) (*Plan, error) {
 		Files:    files,
 		Warnings: allWarnings,
 	}, nil
-}
-
-// placeholderThreads puts every item into one Thread, in Key order, until
-// step 4 replaces it with the real threads.
-func placeholderThreads(byKey map[string]*Item, sortedKeys []string) []Thread {
-	ids := make([]string, 0, len(sortedKeys))
-	for _, k := range sortedKeys {
-		ids = append(ids, byKey[k].ID)
-	}
-	return []Thread{{
-		ID:       hashID("t", placeholderThreadKey),
-		Kind:     ThreadOther,
-		Title:    "All changes",
-		Subtitle: fmt.Sprintf("%d items", len(ids)),
-		Risk:     Risk{Level: "none", Reasons: []string{}},
-		ItemIDs:  nonNil(ids),
-	}}
 }
 
 // buildFileSummaries returns one FileSummary per entry of files, sorted by
